@@ -1,0 +1,214 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>BFHL Tester</title>
+    <style>
+      body { font-family: system-ui, sans-serif; margin: 24px; max-width: 900px; }
+      h1 { margin: 0 0 16px; }
+      .row { display: flex; gap: 16px; align-items: center; flex-wrap: wrap; }
+      input, textarea, button { font: inherit; padding: 10px; }
+      textarea { width: 100%; min-height: 120px; }
+      .card { border: 1px solid #ddd; border-radius: 10px; padding: 16px; margin-top: 20px; }
+      .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 16px; }
+      pre { background: #f6f8fa; padding: 12px; border-radius: 8px; overflow:auto; }
+      .pill { display:inline-block; padding:4px 10px; border-radius:999px; background:#eef; margin:2px 6px 2px 0; }
+      .ok { color: #0a0; font-weight: 600; }
+      .err { color: #a00; font-weight: 600; }
+      footer { margin-top: 28px; color:#666; font-size: 0.9rem; }
+    </style>
+  </head>
+  <body>
+    <h1>BFHL API Tester</h1>
+
+    <div class="card">
+      <div class="row">
+        <label for="endpoint">Endpoint:</label>
+        <input id="endpoint" type="text" value="/bfhl" style="min-width:320px" />
+        <button id="ping">Ping</button>
+        <span id="pingStatus"></span>
+      </div>
+
+      <!-- Build Input Array UI (only once, not nested) -->
+      <h3>Build Input Array</h3>
+      <div class="row">
+        <input id="arrayInput" type="text" placeholder="Enter value" autocomplete="off" />
+        <button id="addItem" type="button">Add</button>
+        <button id="clearArray" type="button" style="margin-left:8px;">Clear Array</button>
+      </div>
+      <div id="inputArrayList" style="margin:10px 0;"></div>
+
+      <p>Payload (auto-generated from array):</p>
+      <textarea id="payload" readonly style="background:#f6f8fa;"></textarea>
+
+      <div class="row">
+        <button id="send">POST /bfhl</button>
+        <span id="status"></span>
+      </div>
+    </div>
+
+    <!-- Only one results card -->
+    <div id="results" class="card" style="display:none;">
+      <h2>Parsed Result</h2>
+      <div class="grid">
+        <div>
+          <h3>Meta</h3>
+          <div id="meta"></div>
+        </div>
+        <div>
+          <h3>Even Numbers</h3>
+          <div id="even"></div>
+        </div>
+        <div>
+          <h3>Odd Numbers</h3>
+          <div id="odd"></div>
+        </div>
+        <div>
+          <h3>Alphabets (Uppercase)</h3>
+          <div id="alphabets"></div>
+        </div>
+        <div>
+          <h3>Special Characters</h3>
+          <div id="special"></div>
+        </div>
+        <div>
+          <h3>Sum</h3>
+          <div id="sum"></div>
+        </div>
+        <div>
+          <h3>Concat String</h3>
+          <div id="concat"></div>
+        </div>
+      </div>
+
+      <h3>Raw JSON</h3>
+      <pre id="raw"></pre>
+    </div>
+
+    <footer>Tip: Build your input array above and click “POST /bfhl”.</footer>
+
+    <script>
+      const q = (sel) => document.querySelector(sel);
+      const pillize = (arr) => (arr && arr.length)
+        ? arr.map(x => `<span class="pill">${String(x)}</span>`).join("")
+        : "<em>Empty</em>";
+
+      async function pingEndpoint() {
+        const url = q("#endpoint").value || "/bfhl";
+        q("#pingStatus").textContent = "Checking...";
+        try {
+          const r = await fetch(url.replace(/\/bfhl$/, "/"), { method: "GET" });
+          const t = await r.text();
+          q("#pingStatus").innerHTML = r.ok
+            ? `<span class="ok">OK</span> — ${t}`
+            : `<span class="err">Error ${r.status}</span>`;
+        } catch (e) {
+          q("#pingStatus").innerHTML = `<span class="err">Failed</span>`;
+        }
+      }
+
+      // Interactive array builder logic
+      let inputArray = ["a","1","334","4","R","$"];
+      const payloadTextarea = q("#payload");
+      const inputArrayList = q("#inputArrayList");
+
+      function updatePayload() {
+        payloadTextarea.value = JSON.stringify({ data: inputArray }, null, 2);
+        renderInputArray();
+      }
+
+      function renderInputArray() {
+        inputArrayList.innerHTML = inputArray.length
+          ? inputArray.map((item, idx) =>
+              `<span class="pill">${item} <button data-idx="${idx}" style="font-size:0.8em;">&times;</button></span>`
+            ).join("")
+          : "<em>Array is empty</em>";
+        // Remove buttons
+        inputArrayList.querySelectorAll("button[data-idx]").forEach(btn => {
+          btn.onclick = function() {
+            inputArray.splice(+btn.dataset.idx, 1);
+            updatePayload();
+          };
+        });
+      }
+
+      q("#addItem").onclick = function() {
+        const val = q("#arrayInput").value.trim();
+        if (val) {
+          inputArray.push(val);
+          q("#arrayInput").value = "";
+          updatePayload();
+        }
+        q("#arrayInput").focus();
+      };
+
+      q("#arrayInput").addEventListener("keydown", function(e) {
+        if (e.key === "Enter") {
+          q("#addItem").click();
+          e.preventDefault();
+        }
+      });
+
+      q("#clearArray").onclick = function() {
+        inputArray = [];
+        updatePayload();
+        q("#arrayInput").focus();
+      };
+
+      // Initialize payload textarea and array list
+      updatePayload();
+
+      async function sendPayload() {
+        const endpoint = q("#endpoint").value || "/bfhl";
+        let body;
+        try {
+          body = JSON.parse(payloadTextarea.value);
+        } catch (e) {
+          q("#status").innerHTML = `<span class="err">Invalid JSON</span>`;
+          return;
+        }
+
+        q("#status").textContent = "Sending...";
+        try {
+          const res = await fetch(endpoint, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(body)
+          });
+          const data = await res.json();
+          q("#status").innerHTML = res.ok
+            ? `<span class="ok">Success</span>`
+            : `<span class="err">Error ${res.status}</span>`;
+
+          // Show card
+          q("#results").style.display = "block";
+
+          // Fill sections
+          q("#meta").innerHTML = `
+            <div><strong>is_success:</strong> ${data.is_success}</div>
+            <div><strong>user_id:</strong> ${data.user_id || ""}</div>
+            <div><strong>email:</strong> ${data.email || ""}</div>
+            <div><strong>roll_number:</strong> ${data.roll_number || ""}</div>
+          `;
+          q("#even").innerHTML = pillize(data.even_numbers);
+          q("#odd").innerHTML = pillize(data.odd_numbers);
+          q("#alphabets").innerHTML = pillize(data.alphabets);
+          q("#special").innerHTML = pillize(data.special_characters || data.sepcial_characters);
+          q("#sum").textContent = data.sum ?? "";
+          q("#concat").textContent = data.concat_string ?? "";
+
+          q("#raw").textContent = JSON.stringify(data, null, 2);
+        } catch (e) {
+          q("#status").innerHTML = `<span class="err">Request failed</span>`;
+        }
+      }
+
+      q("#ping").addEventListener("click", pingEndpoint);
+      q("#send").addEventListener("click", sendPayload);
+      // auto ping
+      pingEndpoint();
+    </script>
+  </body>
+</html>
+</html>
